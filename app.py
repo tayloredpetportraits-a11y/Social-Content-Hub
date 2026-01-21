@@ -9,18 +9,85 @@ from io import BytesIO
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="TPP Studio Command", page_icon="🚀", layout="wide")
 
+# --- 2. AUTHENTICATION (THE GATEKEEPER) ---
+def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store the password
+        else:
+            st.session_state["password_correct"] = False
+
+    # Return True if the pass was verified earlier in the session
+    if "password_correct" in st.session_state:
+        if st.session_state["password_correct"]:
+            return True
+
+    # Show input for password
+    st.title("🔒 TPP Studio Login")
+    st.text_input(
+        "Enter Password", type="password", on_change=password_entered, key="password"
+    )
+    if "password_correct" in st.session_state:
+        st.error("😕 Password incorrect")
+    return False
+
+# STOP HERE IF PASSWORD IS WRONG
+if not check_password():
+    st.stop()  # The app stops here. Nothing below runs.
+
+
 # Custom CSS
 st.markdown("""
     <style>
-    .stApp { background-color: #0E1012; color: #F0F2F5; }
-    [data-testid="stSidebar"] { background-color: #181B1F; border-right: 1px solid #2E3238; }
-    .stTextInput>div>div>input { background-color: #2E3238; color: white; border-radius: 12px; border: 1px solid #3F444D; }
-    .stButton>button { background-color: #7DC6FF; color: #0E1012; border-radius: 20px; font-weight: 700; border: none; }
-    .stButton>button:hover { background-color: #FF9AC4; color: white; }
+    /* Main Background & Text */
+    .stApp { background-color: #FFFFFF; color: #1F2A3C; }
+    
+    /* Headers */
+    h1, h2, h3 { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; letter-spacing: -0.5px; color: #1F2A3C; }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] { background-color: #F7F9FC; border-right: 1px solid #E6E8EB; }
+    
+    /* Input Styling */
+    .stTextInput>div>div>input { 
+        background-color: #FFFFFF; 
+        color: #1F2A3C; 
+        border-radius: 12px; 
+        border: 1px solid #E0E0E0; 
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    
+    /* File Uploader */
+    [data-testid="stFileUploader"] {
+        background-color: #FAFAFA;
+        border: 1px dashed #E0E0E0;
+        border-radius: 12px;
+        padding: 20px;
+    }
+    
+    /* Primary Button */
+    .stButton>button { 
+        background-color: #1F2A3C; 
+        color: white; 
+        border-radius: 20px; 
+        font-weight: 600; 
+        border: none;
+        width: 100%;
+        padding: 8px 20px;
+    }
+    .stButton>button:hover { 
+        background-color: #FF9AC4; 
+        color: white; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
     
     /* Status Badges */
-    .status-ready { color: #4CAF50; font-weight: bold; }
-    .status-scheduled { color: #FFC107; font-weight: bold; }
+    .status-ready { color: #2E7D32; font-weight: bold; }
+    .status-scheduled { color: #F57F17; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -37,18 +104,29 @@ except:
 if GEMINI_KEY: genai.configure(api_key=GEMINI_KEY)
 if NOTION_KEY: notion = Client(auth=NOTION_KEY)
 
-# --- 2. SIDEBAR ---
+# --- 2. SIDEBAR (UPDATED) ---
 with st.sidebar:
     st.header("🧬 Brand DNA")
     if os.path.exists("Taylored Pet Portraits-logo.gif"):
         st.image("Taylored Pet Portraits-logo.gif")
 
-    with st.expander("🎨 Palette", expanded=False):
+    # 1. VISUAL DNA (Existing)
+    with st.expander("🎨 Visual Palette", expanded=False):
         c_bg1 = st.color_picker("Cool Blue", "#E4F3FF")
         c_acc1 = st.color_picker("Sky Blue", "#7DC6FF")
         c_text = st.color_picker("Navy Text", "#1F2A3C")
 
+    # 2. VERBAL DNA (New!)
+    with st.expander("🗣️ Brand Voice (Editable)", expanded=True):
+        brand_mission = st.text_area(
+            "Mission / Key Msg:", 
+            value="We turn your pet photos into modern pop-art masterpieces. 5% of all profits are donated to local animal shelters."
+        )
+        founder_name = st.text_input("Founder Sign-off:", value="Taylor")
+        
     st.divider()
+    
+    # 3. SETTINGS
     st.header("📢 Settings")
     output_format = st.radio("Format:", ["Square (1:1)", "Story (9:16)", "Landscape (16:9)"])
     caption_vibe = st.select_slider("Vibe:", ["Heartfelt ❤️", "Witty 🤪", "Luxury ✨", "Urgent 🚨"])
@@ -122,8 +200,25 @@ def generate_asset_pair(topic, raw_image, index):
     Style: Pop-Art, Premium.
     """
     
+    # TEXT LOGIC (Now reads the Sidebar!)
     text_model = genai.GenerativeModel('gemini-3-pro')
-    text_prompt = f"Write caption for '{topic}'. Tone: {caption_vibe}. Include 30 hashtags."
+    
+    text_prompt = f"""
+    Write a social media caption for '{topic}' (Variation {index+1}).
+    
+    BRAND CONTEXT:
+    - Mission: "{brand_mission}"
+    - Founder: {founder_name}
+    
+    TONE: {caption_vibe}
+    - If Heartfelt: Focus on the bond and the mission.
+    - If Witty: Use puns relative to the pet breed.
+    - If Luxury: Focus on 'Museum Quality' and 'Decor'.
+    
+    INSTRUCTIONS:
+    - End with a sign-off from {founder_name} if appropriate.
+    - Include 30 niche hashtags.
+    """
     
     try:
         if raw_image:
