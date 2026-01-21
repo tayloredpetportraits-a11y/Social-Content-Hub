@@ -2,12 +2,27 @@ import streamlit as st
 import os
 import google.generativeai as genai
 from notion_client import Client
-from datetime import datetime
+from datetime import datetime, timedelta
 from PIL import Image
 from io import BytesIO
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="TPP Studio", page_icon="🍌", layout="wide")
+st.set_page_config(page_title="TPP Studio Command", page_icon="🚀", layout="wide")
+
+# Custom CSS
+st.markdown("""
+    <style>
+    .stApp { background-color: #0E1012; color: #F0F2F5; }
+    [data-testid="stSidebar"] { background-color: #181B1F; border-right: 1px solid #2E3238; }
+    .stTextInput>div>div>input { background-color: #2E3238; color: white; border-radius: 12px; border: 1px solid #3F444D; }
+    .stButton>button { background-color: #7DC6FF; color: #0E1012; border-radius: 20px; font-weight: 700; border: none; }
+    .stButton>button:hover { background-color: #FF9AC4; color: white; }
+    
+    /* Status Badges */
+    .status-ready { color: #4CAF50; font-weight: bold; }
+    .status-scheduled { color: #FFC107; font-weight: bold; }
+    </style>
+""", unsafe_allow_html=True)
 
 # Secrets
 try:
@@ -22,245 +37,191 @@ except:
 if GEMINI_KEY: genai.configure(api_key=GEMINI_KEY)
 if NOTION_KEY: notion = Client(auth=NOTION_KEY)
 
-# --- 2. CUSTOM CSS (Pomelli Hybrid) ---
-st.markdown("""
-    <style>
-    /* Main Background & Text */
-    .stApp { background-color: #FFFFFF; color: #1F2A3C; }
-    
-    /* Headers */
-    h1, h2, h3 { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; letter-spacing: -0.5px; color: #1F2A3C; }
-    
-    /* Sidebar */
-    [data-testid="stSidebar"] { background-color: #F7F9FC; border-right: 1px solid #E6E8EB; }
-    
-    /* Input Styling */
-    .stTextInput>div>div>input { 
-        background-color: #FAFAFA; 
-        color: #1F2A3C; 
-        border-radius: 12px; 
-        border: 1px solid #E0E0E0; 
-        padding: 10px 15px;
-    }
-    
-    /* File Uploader */
-    [data-testid="stFileUploader"] {
-        background-color: #FAFAFA;
-        border: 1px dashed #E0E0E0;
-        border-radius: 12px;
-        padding: 20px;
-    }
-    
-    /* Primary Button */
-    .stButton>button { 
-        background-color: #1F2A3C; 
-        color: white; 
-        border-radius: 20px; 
-        font-weight: 600; 
-        border: none;
-        width: 100%;
-        padding: 8px 20px;
-    }
-    .stButton>button:hover { 
-        background-color: #FF9AC4; 
-        color: white; 
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    }
-    
-    /* Card Styling */
-    div[data-testid="stVerticalBlock"] > div[style*="background-color"] {
-        border: 1px solid #E0E0E0;
-        border-radius: 12px;
-        padding: 15px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# --- 3. SIDEBAR: BRAND DNA ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
     st.header("🧬 Brand DNA")
     if os.path.exists("Taylored Pet Portraits-logo.gif"):
         st.image("Taylored Pet Portraits-logo.gif")
-    
-    st.write("### 🎨 Active Palette")
-    c_bg1 = st.color_picker("Cool Blue", "#E4F3FF")
-    c_bg2 = st.color_picker("Soft Lilac", "#E0D6FF")
-    c_acc1 = st.color_picker("Sky Blue", "#7DC6FF")
-    c_acc2 = st.color_picker("Bubblegum Pink", "#FF9AC4")
-    c_text = st.color_picker("Navy Text", "#1F2A3C")
-    
+
+    with st.expander("🎨 Palette", expanded=False):
+        c_bg1 = st.color_picker("Cool Blue", "#E4F3FF")
+        c_acc1 = st.color_picker("Sky Blue", "#7DC6FF")
+        c_text = st.color_picker("Navy Text", "#1F2A3C")
+
     st.divider()
-    if NOTION_KEY: 
-        st.success("● Vault Connected")
-    else: 
-        st.warning("○ Vault Disconnected")
+    st.header("📢 Settings")
+    output_format = st.radio("Format:", ["Square (1:1)", "Story (9:16)", "Landscape (16:9)"])
+    caption_vibe = st.select_slider("Vibe:", ["Heartfelt ❤️", "Witty 🤪", "Luxury ✨", "Urgent 🚨"])
 
-# --- 4. GEMINI 3 ENGINE ---
+# --- 3. SMART SCHEDULER LOGIC ---
 
-def generate_campaign_assets(topic, raw_image=None):
+def get_next_optimal_slot(offset_days=0):
     """
-    STRICTLY GEMINI 3 PRO.
-    Visuals: gemini-3-pro-image-preview
-    Copy: gemini-3-pro
+    Finds the next high-engagement slot after the LAST scheduled post.
     """
-    # 1. VISUAL ENGINE
-    img_model = genai.GenerativeModel('gemini-3-pro-image-preview')
+    if not NOTION_KEY: return datetime.now()
     
-    design_prompt = f"""
-    Create a high-fidelity marketing image for the campaign: '{topic}'.
-    
-    DESIGN SYSTEM:
-    - Primary Colors: {c_bg1}, {c_bg2}
-    - Accent Colors: {c_acc1}, {c_acc2}
-    - Key Text Color: {c_text}
-    
-    COMPOSITION:
-    - Professional Studio Lighting.
-    - If a pet photo is provided, style it as a Premium Art Portrait.
-    - If no photo, create a conceptual illustration.
-    - Overlay the campaign title '{topic}' using a clean, modern font.
-    """
-    
-    # 2. COPY ENGINE
-    txt_model = genai.GenerativeModel('gemini-3-pro')
-    
-    copy_prompt = f"""
-    Write a high-converting Instagram caption for the campaign '{topic}'.
-    
-    TONE:
-    - Empathetic but excited.
-    - Use 1-2 emojis.
-    - Include a Call to Action (CTA).
-    - Add 3 relevant hashtags.
-    """
-    
+    # 1. Find last scheduled date in Notion
     try:
-        # Generate Image
-        if raw_image:
-            img_input = Image.open(raw_image)
-            response_img = img_model.generate_content([design_prompt, img_input])
+        resp = notion.databases.query(
+            **{"database_id": DATABASE_ID, 
+               "sorts": [{"property": "Date", "direction": "descending"}],
+               "page_size": 1}
+        )
+        if resp['results']:
+            last_date_str = resp['results'][0]['properties']['Date']['date']['start']
+            last_date = datetime.fromisoformat(last_date_str[:19]) # Strip timezone for simplicity
         else:
-            response_img = img_model.generate_content(design_prompt)
-            
-        # Robust Image Extraction
-        final_image = None
-        part = response_img.parts[0]
-        if hasattr(part, 'inline_data') and part.inline_data.data:
-             final_image = Image.open(BytesIO(part.inline_data.data))
-        elif hasattr(part, 'image'):
-             final_image = part.image
-        else:
-             final_image = "Error: No image found in response."
-
-        # Generate Text
-        response_txt = txt_model.generate_content(copy_prompt)
-        final_text = response_txt.text
+            last_date = datetime.now()
+    except:
+        last_date = datetime.now()
+    
+    # 2. Start calculation from Last Date + 1 Day (plus offset for batching)
+    target_date = last_date + timedelta(days=1 + offset_days)
+    weekday = target_date.weekday() # 0=Mon, 6=Sun
+    
+    # 3. Apply Heuristic Logic (Engagement Windows)
+    if weekday <= 2: # Mon-Wed: Evening Commute
+        optimal_hour = 18 # 6 PM
+    elif weekday <= 4: # Thu-Fri: Lunch Break
+        optimal_hour = 12 # 12 PM
+    else: # Sat-Sun: Morning
+        optimal_hour = 9 # 9 AM
         
-        return final_image, final_text
+    final_slot = target_date.replace(hour=optimal_hour, minute=0, second=0, microsecond=0)
+    return final_slot
 
-    except Exception as e:
-        return f"Gen Error: {e}", f"Gen Error: {e}"
-
-def save_to_notion(title, caption):
+def save_to_vault(title, caption, status="Draft", schedule_date=None):
+    if not schedule_date: schedule_date = datetime.now()
+    
     try:
         notion.pages.create(
             parent={"database_id": DATABASE_ID},
             properties={
                 "Name": {"title": [{"text": {"content": title}}]},
                 "Caption": {"rich_text": [{"text": {"content": caption}}]},
-                "Status": {"select": {"name": "Draft"}},
-                "Date": {"date": {"start": datetime.now().isoformat()}}
+                "Status": {"select": {"name": status}},
+                "Date": {"date": {"start": schedule_date.isoformat()}}
             }
         )
         return True
-    except Exception as e:
-        return str(e)
+    except: return False
 
-# --- 5. UI LAYOUT ---
+# --- 4. ENGINE (GEMINI 3) ---
 
-st.markdown("<h1 style='text-align: center; margin-bottom: 2rem;'>What are we creating today?</h1>", unsafe_allow_html=True)
-
-# INPUT DECK (CENTERED)
-with st.container():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        # Row 1: Idea
-        campaign_topic = st.text_input("Campaign Idea", placeholder="e.g. Valentine's Day Portrait Sale")
-        
-        # Row 2: Photo
-        uploaded_file = st.file_uploader("Drop Pet Photo Reference 📸", type=['jpg', 'png', 'jpeg'])
-        
-        # Row 3: Action
-        generate_btn = st.button("✨ Generate Campaign Assets")
-
-# OUTPUT SECTION
-if generate_btn and campaign_topic:
-    st.divider()
-    st.write(f"### 🍌 Developing: {campaign_topic}")
+def generate_asset_pair(topic, raw_image, index):
+    image_model = genai.GenerativeModel('gemini-3-pro-image-preview')
     
-    if not GEMINI_KEY:
-        st.error("Please add GEMINI_KEY to secrets.toml")
-    else:
-        with st.spinner("Gemini 3 is designing & writing..."):
-            visual, copy = generate_campaign_assets(campaign_topic, uploaded_file)
-            
-            out_col1, out_col2 = st.columns(2)
-            
-            # Col 1: Visual
-            with out_col1:
-                st.caption("Visual (Nano Banana Pro)")
-                if isinstance(visual, str):
-                    st.error(visual)
-                else:
-                    st.image(visual, use_container_width=True)
-            
-            # Col 2: Copy
-            with out_col2:
-                st.caption("Copy (Gemini 3 Pro)")
-                st.text_area("Caption", value=copy, height=400)
-                
-                if st.button("💾 Save to Vault"):
-                    if NOTION_KEY:
-                        res = save_to_notion(campaign_topic, copy)
-                        if res is True:
-                            st.success("Saved to Notion!")
-                        else:
-                            st.error(f"Notion Error: {res}")
-                    else:
-                        st.warning("Please connect Notion to save drafts.")
-
-# DASHBOARD: RECENT CAMPAIGNS
-st.divider()
-st.subheader("Recent Campaigns")
-
-if NOTION_KEY and DATABASE_ID:
+    layout = "Center subject."
+    if "Story" in output_format: layout = "Generate TALL (9:16). Negative space at top."
+    
+    image_prompt = f"""
+    Create high-fidelity social image for: '{topic}'.
+    Palette: {c_bg1}, {c_acc1}, {c_text}.
+    Format: {layout}
+    Style: Pop-Art, Premium.
+    """
+    
+    text_model = genai.GenerativeModel('gemini-3-pro')
+    text_prompt = f"Write caption for '{topic}'. Tone: {caption_vibe}. Include 30 hashtags."
+    
     try:
-        response = notion.databases.query(
-            **{"database_id": DATABASE_ID, "page_size": 3, 
-               "filter": {"property": "Status", "select": {"equals": "Draft"}}}
-        )
-        
-        results = response.get("results", [])
-        if results:
-            d_cols = st.columns(3)
-            for i, page in enumerate(results):
-                # Safe Property Extraction
-                props = page['properties']
-                try: title = props['Name']['title'][0]['plain_text']
-                except: title = "Untitled"
-                try: caption = props['Caption']['rich_text'][0]['plain_text'][:100] + "..."
-                except: caption = "No caption..."
-                
-                with d_cols[i]:
-                    with st.container():
-                        st.markdown(f"**{title}**")
-                        st.caption(caption)
-                        st.markdown("`Status: Draft`")
+        if raw_image:
+            img = Image.open(raw_image)
+            img_res = image_model.generate_content([image_prompt, img])
         else:
-            st.info("No recent drafts found.")
+            img_res = image_model.generate_content(image_prompt)
             
+        # Robust extract
+        final_image = None
+        part = img_res.parts[0]
+        if hasattr(part, 'inline_data') and part.inline_data.data:
+             final_image = Image.open(BytesIO(part.inline_data.data))
+        elif hasattr(part, 'image'):
+             final_image = part.image
+        else:
+             final_image = None
+
+        txt_res = text_model.generate_content(text_prompt)
+        return final_image, txt_res.text
     except Exception as e:
-        st.error(f"Could not load dashboard: {e}")
-else:
-    st.info("Connect Notion to see recent campaigns.")
+        return None, str(e)
+
+# --- 5. MAIN UI ---
+st.markdown("<h1 style='text-align: center;'>TPP Studio Command 🚀</h1>", unsafe_allow_html=True)
+
+tab_create, tab_mockup, tab_queue = st.tabs(["✨ Content Factory", "🖼️ Mockup Studio", "🗓️ Smart Queue"])
+
+# TAB 1: FACTORY
+with tab_create:
+    topic = st.text_input("Topic/Idea", placeholder="e.g. 'Barney Reveal'")
+    files = st.file_uploader("Upload (Single or Batch)", accept_multiple_files=True)
+    
+    # Session State to hold results
+    if 'generated_assets' not in st.session_state:
+        st.session_state.generated_assets = []
+
+    if st.button("Generate Assets"):
+        st.session_state.generated_assets = [] # Clear previous
+        if files and GEMINI_KEY:
+            cols = st.columns(2)
+            progress = st.progress(0)
+            
+            for i, f in enumerate(files):
+                img, txt = generate_asset_pair(topic, f, i)
+                if img:
+                    st.session_state.generated_assets.append({"title": f"{topic} {i+1}", "caption": txt, "image": img})
+                    with cols[i%2]:
+                        st.image(img)
+                        st.caption(txt[:100]+"...")
+                progress.progress((i+1)/len(files))
+    
+    # Display Results from State
+    if st.session_state.generated_assets:
+        st.divider()
+        st.write("### Actions")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("🔥 Post Now (Mark Ready)", type="primary"):
+                for r in st.session_state.generated_assets:
+                    save_to_vault(r['title'], r['caption'], "Ready", datetime.now())
+                st.success("Sent to 'Ready' list!")
+        with col_b:
+            if st.button("⏳ Add to Smart Queue"):
+                for i, r in enumerate(st.session_state.generated_assets):
+                    # Stagger by 2 days each
+                    slot = get_next_optimal_slot(offset_days=i*2)
+                    save_to_vault(r['title'], r['caption'], "Scheduled", slot)
+                st.balloons()
+                st.success("Added to Smart Queue!")
+
+# TAB 2: MOCKUP (Simplified for Demo)
+with tab_mockup:
+    st.info("Upload finished art to see it on a Canvas/Mug.")
+    mock_file = st.file_uploader("Finished Art", type=['png','jpg'])
+    mock_type = st.selectbox("Mockup Type", ["Living Room Canvas", "Coffee Mug", "Phone Case"])
+    
+    if st.button("Generate Mockup") and mock_file:
+        # (Reuse generate logic with specific Mockup prompt)
+        st.warning("Mockup Engine running... (Simulated)")
+        st.image(mock_file, caption=f"Mockup: {mock_type}")
+
+# TAB 3: QUEUE
+with tab_queue:
+    st.header("🗓️ Upcoming Schedule")
+    if st.button("Refresh Queue"):
+        if NOTION_KEY:
+            try:
+                resp = notion.databases.query(
+                    **{"database_id": DATABASE_ID, 
+                       "filter": {"property": "Status", "select": {"equals": "Scheduled"}},
+                       "sorts": [{"property": "Date", "direction": "ascending"}]}
+                )
+                for page in resp['results']:
+                    try: 
+                        t = page['properties']['Name']['title'][0]['plain_text']
+                        d = page['properties']['Date']['date']['start']
+                        st.info(f"📅 {d[:16].replace('T', ' @ ')} — {t}")
+                    except: pass
+            except Exception as e:
+                st.error(f"Error fetching queue: {e}")
